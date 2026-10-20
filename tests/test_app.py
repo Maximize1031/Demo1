@@ -279,3 +279,15 @@ def test_inline_skill_metadata_matches_manifest(monkeypatch):
     monkeypatch.setattr(workflow.httpx, "Client", lambda **kwargs: real(transport=httpx.MockTransport(handler), **kwargs))
     with pytest.raises(workflow.WorkflowError, match="test end"):
         workflow.live_review("test-key", "test-model", "initial", None)
+
+
+def test_structured_answer_excludes_tool_progress_messages():
+    final = '{"assessment":"actual final answer"}'
+    payload = {"status":"completed", "output":[
+        {"type":"message", "phase":"commentary", "content":[{"type":"output_text", "text":"I will read the skill and records."}]},
+        {"type":"shell_call"},
+        {"type":"message", "phase":"final_answer", "content":[{"type":"output_text", "text":final}]}]}
+    assert workflow.output_text(payload) == final
+    for item in payload["output"]:
+        item.pop("phase", None)
+    assert workflow.output_text(payload) == final

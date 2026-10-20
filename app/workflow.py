@@ -110,8 +110,12 @@ def rehearsal(phase):
 def output_text(response):
     if response.get("status") != "completed":
         raise WorkflowError("The AI run did not finish. No partial assessment was saved. Please retry.")
-    texts = [part["text"] for item in response.get("output", []) if item.get("type") == "message"
-             for part in item.get("content", []) if part.get("type") == "output_text"]
+    messages = [item for item in response.get("output", []) if item.get("type") == "message"
+                and any(part.get("type") == "output_text" for part in item.get("content", []))]
+    finals = [item for item in messages if item.get("phase") == "final_answer"]
+    selected = finals[-1:] or messages[-1:]
+    texts = [part["text"] for item in selected for part in item.get("content", [])
+             if part.get("type") == "output_text"]
     if not texts:
         raise WorkflowError("The AI did not return a review. Please retry.")
     return "\n".join(texts)
@@ -160,7 +164,11 @@ def live_review(key, model, phase, previous, records=None, case=None):
             })
             response.raise_for_status()
             payload = response.json()
-            result = validate_result(json.loads(output_text(payload)), phase, "live", records, case)
+            try:
+                final_documents = json.loads(output_text(payload))
+            except json.JSONDecodeError as exc:
+                raise WorkflowError("The AI's final answer did not match the required JSON format. Please retry.") from exc
+            result = validate_result(final_documents, phase, "live", records, case)
             result["execution"] = {"response_id": payload.get("id"), "model": payload.get("model", model),
                                    "shell_calls": sum(i.get("type") == "shell_call" for i in payload.get("output", []))}
             if not result["execution"]["shell_calls"]:
