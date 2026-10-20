@@ -264,3 +264,18 @@ def test_custom_bundle_contains_only_uploaded_evidence():
         paths = [p for p in z.namelist() if '/records/' in p]
         assert paths == ['m1031-intake-web/records/new-case.txt']
         assert z.read(paths[0]) == b'Fresh synthetic information.'
+
+
+def test_inline_skill_metadata_matches_manifest(monkeypatch):
+    def handler(request):
+        if request.url.path.endswith("/containers"):
+            payload = json.loads(request.content)
+            manifest = (workflow.SKILL / "SKILL.md").read_text()
+            assert "name: " + payload["skills"][0]["name"] + "\n" in manifest
+            assert "description: " + payload["skills"][0]["description"] + "\n" in manifest
+            return httpx.Response(400, json={"error": {"message": "test end"}})
+        raise AssertionError("No further calls expected")
+    real = httpx.Client
+    monkeypatch.setattr(workflow.httpx, "Client", lambda **kwargs: real(transport=httpx.MockTransport(handler), **kwargs))
+    with pytest.raises(workflow.WorkflowError, match="test end"):
+        workflow.live_review("test-key", "test-model", "initial", None)

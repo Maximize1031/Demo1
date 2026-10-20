@@ -130,7 +130,7 @@ def live_review(key, model, phase, previous, records=None, case=None):
             response = client.post("containers", json={
                 "name": "m1031-synthetic-intake",
                 "skills": [{"type": "inline", "name": "m1031-intake-web",
-                            "description": "Review synthetic exchange intake and run Python validation.",
+                            "description": re.search(r"^description: (.+)$", (SKILL / "SKILL.md").read_text(), re.M).group(1),
                             "source": {"type": "base64", "media_type": "application/zip", "data": bundle(phase, records)}}],
             })
             response.raise_for_status()

@@ -30,7 +30,7 @@ function renderReview() {
   $("case-name").textContent=caseInfo.name;$("nav-case").textContent=caseInfo.name;$("case-id").textContent=caseInfo.id;
   $("sample-meta").hidden=!!state.custom;
   $("case-property").textContent=current?.property|| (state.custom?"Upload records to begin":"1250 Orchard Avenue · Pasadena, CA 91103");
-  $("data-status").textContent=state.stale?"New evidence is ready. Run a fresh review to analyze it. The results below are from the previous review.":current?`${current.mode==="live"?"AI analyzed":"Saved example covers"} ${current.source_snapshot?.length||state.sources.length} documents · ${new Date(current.created_at*1000).toLocaleString()}`:`${state.sources.length} documents ready · Not yet analyzed`;
+  $("data-status").textContent=state.stale?"New evidence is ready. Run a fresh review to analyze it. The results below are from the previous review.":current?`${current.mode==="live"?"AI analyzed":"Saved example covers"} ${current.source_snapshot?.length||state.sources.length} documents · ${new Date(current.created_at*1000).toLocaleString()}`:`${state.sources.length} document${state.sources.length===1?"":"s"} ready · Not yet analyzed`;
   $("data-status").className=state.stale?"error":"";
   $("empty").hidden=!!current;$("intake-content").hidden=!current;
   $("download").hidden=!current;
