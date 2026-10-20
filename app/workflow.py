@@ -186,6 +186,11 @@ def api_diagnostic(response):
             value = error.get(field)
             if isinstance(value, str) and re.fullmatch(r"[a-zA-Z0-9_.\[\]-]{1,100}", value):
                 details.append(field + "=" + value)
+        if response.status_code == 400:
+            message = error.get("message", "")
+            if isinstance(message, str):
+                message = re.sub(r"sk-[A-Za-z0-9_-]+|[A-Za-z0-9+/=_-]{40,}", "[redacted]", message)
+                details.append(message[:400])
     except (ValueError, AttributeError):
         pass
     stage = "container setup" if "/containers" in response.request.url.path else "model response"
