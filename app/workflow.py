@@ -166,7 +166,7 @@ def live_review(key, model, phase, previous, records=None, case=None):
                 raise WorkflowError("The AI did not execute the skill in its sandbox. Please retry.")
             return result
         except httpx.HTTPStatusError as exc:
-            raise WorkflowError(api_error(exc.response.status_code)) from exc
+            raise WorkflowError(api_diagnostic(exc.response)) from exc
         except (httpx.RequestError, KeyError, json.JSONDecodeError) as exc:
             raise WorkflowError("The AI service could not complete this run. Please retry.") from exc
         finally:
@@ -175,6 +175,22 @@ def live_review(key, model, phase, previous, records=None, case=None):
                     client.delete("containers/" + container_id, timeout=15)
                 except httpx.HTTPError:
                     pass  # Hosted container expiry remains the fallback cleanup.
+
+
+def api_diagnostic(response):
+    """Expose only provider error identifiers, never request bodies or credentials."""
+    details = []
+    try:
+        error = response.json().get("error", {})
+        for field in ("code", "param"):
+            value = error.get(field)
+            if isinstance(value, str) and re.fullmatch(r"[a-zA-Z0-9_.\[\]-]{1,100}", value):
+                details.append(field + "=" + value)
+    except (ValueError, AttributeError):
+        pass
+    stage = "container setup" if "/containers" in response.request.url.path else "model response"
+    suffix = "; ".join([stage, "HTTP " + str(response.status_code)] + details)
+    return api_error(response.status_code) + " (" + suffix + ")"
 
 
 def api_error(status):
@@ -216,6 +232,6 @@ def answer_question(key, model, current, history, question):
                 raise WorkflowError("The answer included a possible tax identifier and was withheld.")
             return answer
         except httpx.HTTPStatusError as exc:
-            raise WorkflowError(api_error(exc.response.status_code)) from exc
+            raise WorkflowError(api_diagnostic(exc.response)) from exc
         except (httpx.RequestError, KeyError, json.JSONDecodeError) as exc:
             raise WorkflowError("The AI service could not answer right now. Please retry.") from exc
