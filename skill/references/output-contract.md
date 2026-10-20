@@ -25,12 +25,12 @@ renderer is a Python validation step only.
 Required assessment metadata before the table:
 
 ```text
-Case: Rivera Orchard LLC
-Case ID: DEMO-RIVERA-001
-Property: 1250 Orchard Avenue, Pasadena, CA 91103
+Case: <case name supplied by the application>
+Case ID: <case ID supplied by the application>
+Property: <property established by the evidence, or Not yet established>
 Mode: Synthetic post-ingestion workflow demonstration
-Revision: initial (or updated)
-Source records: 5 (or 7)
+Revision: <current revision label>
+Source records: <actual number of records supplied>
 ```
 
 Return the complete documents in JSON fields `assessment`, `client_email`, and

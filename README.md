@@ -31,6 +31,24 @@ not call an AI model. Python validates and renders those outputs before displayi
 them. Initial expected counts: 19 found, 5 external open, 1 internal open, 1 conflict.
 Updated: 22 found, 1 external open, 1 internal open, 0 conflicts.
 
+## Upload your own synthetic case
+
+1. Click **Start a new case**, enter the synthetic client name, and create it.
+2. Choose `.md` or `.txt` files and click **Upload files**.
+3. Select **Live AI** and click **Run intake review**.
+4. Upload additional evidence with a new filename, then **Run fresh AI review**.
+5. History shows changed checklist values/statuses. Download includes each review's
+   exact source files. Chat stays disabled while uploaded evidence awaits review.
+
+Uploads are saved under `DATA_DIR/uploads`, isolated by browser session. They are
+never committed to GitHub. A new case starts empty; Rivera samples are not included.
+The default Rivera workspace can also accept additional evidence in live mode.
+Limits: 100 KB/file, 30 records, 500 KB combined. Only synthetic text without tax
+identifiers is accepted. Session access expires after 24 hours; expired files are
+cleaned at server startup. Reset, new case, and sign-out clear that session's files.
+Downloads preserve prior source snapshots; uploaded instructions are treated as
+untrusted evidence. Live calls never fall back to saved rehearsal results.
+
 ## Enable live AI
 
 Add `OPENAI_API_KEY` to `.env` with your editor, then restart the server.
@@ -68,7 +86,7 @@ root of a dedicated repository. This demo uses the public repository
 https://github.com/Maximize1031/Demo1, as selected by its owner. Do not upload the parent Claude folder.
 
 Production requires a demo password of at least 16 characters. The blueprint uses
-a paid web instance and a persistent disk. Hosting is not yet provisioned.
+a paid web instance and a persistent disk. The deployed site is https://m1031-intake-demo.onrender.com.
 
 ## Tests
 
@@ -83,7 +101,7 @@ requires credentials and account permissions.
 
 ## Scope and operational limits
 
-- Synthetic Rivera records only; no uploads, PDF extraction, email sending,
+- Synthetic Markdown and UTF-8 text uploads; no PDF/Word extraction, email sending,
   Accruit submission, or external connectors.
 - Shared demo password, isolated random browser sessions, one-day cookie expiry.
   This is not a production client identity system.

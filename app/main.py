@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 from typing import Literal
 
 from . import workflow
+from .documents import DocumentStore, MAX_REQUEST_BYTES
 
 ROOT = workflow.ROOT
 load_dotenv(ROOT / ".env")
@@ -34,6 +35,7 @@ def create_app(data_dir=None, testing=False):
         raise RuntimeError("Set DEMO_PASSWORD to at least 16 characters before deploying.")
     data = Path(data_dir or os.getenv("DATA_DIR", str(ROOT / "data")))
     data.mkdir(parents=True, exist_ok=True)
+    documents = DocumentStore(data / "uploads")
     db_path = data / "intake.sqlite3"
     pool = ThreadPoolExecutor(max_workers=2)
     daily_limit = int(os.getenv("MAX_LIVE_CALLS_PER_DAY", "50"))
@@ -56,6 +58,8 @@ def create_app(data_dir=None, testing=False):
         """)
         c.execute("UPDATE jobs SET status='failed', error='The server restarted. Please retry.' "
                   "WHERE status IN ('queued','running')")
+        for expired in c.execute("SELECT id FROM sessions WHERE expires < ?", (time.time(),)).fetchall():
+            documents.clear(expired["id"])
         c.execute("DELETE FROM sessions WHERE expires < ?", (time.time(),))
         c.execute("DELETE FROM jobs WHERE session_id NOT IN (SELECT id FROM sessions)")
 
@@ -71,6 +75,10 @@ def create_app(data_dir=None, testing=False):
     async def security(request, call_next):
         if request.method == "POST" and request.headers.get("x-intake-request") != "1":
             return Response("Invalid request", status_code=403)
+        if request.method == "POST":
+            body = await request.body()
+            if len(body) > MAX_REQUEST_BYTES:
+                return Response("Upload is too large", status_code=413)
         response = await call_next(request)
         response.headers.update({
             "X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY",
@@ -93,7 +101,54 @@ def create_app(data_dir=None, testing=False):
         return sid, json.loads(row["state"])
 
     def empty_state():
-        return {"current": None, "revisions": [], "messages": []}
+        return {"current": None, "revisions": [], "messages": [], "documents": [],
+                "case": workflow.SAMPLE_CASE, "custom": False, "batch": "initial"}
+
+    def records(sid, snapshot):
+        base = [] if snapshot.get("custom") else workflow.sources(snapshot.get("batch", snapshot.get("current", {}).get("phase", "initial") if snapshot.get("current") else "initial"))
+        return base + documents.read(sid, snapshot.get("documents", []))
+
+    def locked(c, sid):
+        c.execute("BEGIN IMMEDIATE")
+        if c.execute("SELECT 1 FROM jobs WHERE session_id=? AND status IN ('queued','running')", (sid,)).fetchone():
+            raise HTTPException(409, "Wait for the current run to finish.")
+        return json.loads(c.execute("SELECT state FROM sessions WHERE id=?", (sid,)).fetchone()[0])
+
+    class Upload(BaseModel):
+        files: list[dict] = Field(min_length=1, max_length=30)
+
+    @app.post("/api/upload")
+    def upload(payload: Upload, request: Request):
+        sid, _ = session(request)
+        with db() as c:
+            snapshot = locked(c, sid)
+            if snapshot["current"] and snapshot["current"]["mode"] == "rehearsal":
+                raise HTTPException(409, "Start a new case or reset before uploading for Live AI.")
+            try:
+                prepared = documents.prepare(payload.files, records(sid, snapshot))
+                metadata = documents.save(sid, prepared)
+            except workflow.WorkflowError as exc:
+                raise HTTPException(400, str(exc))
+            snapshot.setdefault("documents", []).extend(metadata)
+            c.execute("UPDATE sessions SET state=? WHERE id=?", (json.dumps(snapshot), sid))
+        return {"uploaded": len(metadata)}
+
+    class NewCase(BaseModel):
+        name: str = Field(min_length=1, max_length=100)
+
+    @app.post("/api/case")
+    def new_case(payload: NewCase, request: Request):
+        sid, _ = session(request)
+        name = payload.name.strip()
+        if not name or workflow.SENSITIVE.search(name) or any(ord(ch) < 32 for ch in name):
+            raise HTTPException(400, "Enter a synthetic case name without tax identifiers.")
+        with db() as c:
+            locked(c, sid)
+            documents.clear(sid)
+            snapshot = empty_state()
+            snapshot.update(custom=True, case={"id": "DEMO-" + secrets.token_hex(4).upper(), "name": name})
+            c.execute("UPDATE sessions SET state=? WHERE id=?", (json.dumps(snapshot), sid))
+        return {"ok": True}
 
     @app.get("/health")
     def health():
@@ -137,6 +192,8 @@ def create_app(data_dir=None, testing=False):
     def logout(request: Request, response: Response):
         sid, _ = session(request)
         with db() as c:
+            locked(c, sid)
+            documents.clear(sid)
             c.execute("DELETE FROM sessions WHERE id=?", (sid,))
         response.delete_cookie("intake_session")
         return {"ok": True}
@@ -149,16 +206,20 @@ def create_app(data_dir=None, testing=False):
                             "ORDER BY created DESC LIMIT 1", (sid,)).fetchone()
         phase = current["current"]["phase"] if current["current"] else "initial"
         return {**current, "job": dict(job) if job else None,
-                "sources": workflow.sources(phase)}
+                "sources": records(sid, current),
+                "stale": bool(current["current"] and current["current"]["mode"] == "live" and current["current"].get("source_digest") != workflow.source_digest(records(sid, current)))}
 
     def execute(job_id, sid, kind, mode, phase, question, snapshot):
         with db() as c:
             c.execute("UPDATE jobs SET status='running' WHERE id=?", (job_id,))
         try:
             if kind == "review":
-                result = (workflow.live_review(key, model, phase, snapshot["current"])
+                result = (workflow.live_review(key, model, phase, snapshot["current"],
+                                               records(sid, snapshot), snapshot.get("case", workflow.SAMPLE_CASE))
                           if mode == "live" else workflow.rehearsal(phase))
                 result["created_at"] = time.time()
+                previous = snapshot["current"]
+                result["changed_items"] = [r["item"] for r in result["rows"] if previous and any(old["item"] == r["item"] and (old["state"], old["value"]) != (r["state"], r["value"]) for old in previous["rows"])]
                 snapshot["current"] = result
                 snapshot["revisions"].append(result)
                 snapshot["messages"] = []
@@ -181,9 +242,25 @@ def create_app(data_dir=None, testing=False):
             raise HTTPException(503, "Live AI is not configured yet. Rehearsal mode is available.")
         job_id = secrets.token_hex(16)
         with db() as c:
-            c.execute("BEGIN IMMEDIATE")
-            if c.execute("SELECT 1 FROM jobs WHERE session_id=? AND status IN ('queued','running')", (sid,)).fetchone():
-                raise HTTPException(409, "A run is already in progress.")
+            snapshot = locked(c, sid)
+            if kind == "review":
+                previous = snapshot["current"]
+                if previous and previous["mode"] != mode:
+                    raise HTTPException(409, "Reset or start a new case to change modes.")
+                if mode == "rehearsal" and phase == "initial" and previous:
+                    raise HTTPException(409, "Reset before starting another rehearsal.")
+                if phase == "updated" and (snapshot.get("custom") or not previous or previous["phase"] != "initial"):
+                    raise HTTPException(409, "Run the sample initial review before adding the next batch.")
+                if mode == "rehearsal" and (snapshot.get("documents") or snapshot.get("custom")):
+                    raise HTTPException(409, "Uploaded records require Live AI mode.")
+                if phase == "updated":
+                    snapshot["batch"] = "updated"
+                if mode == "live" and snapshot.get("batch") == "updated":
+                    phase = "updated"
+                if mode == "live" and not records(sid, snapshot):
+                    raise HTTPException(400, "Upload at least one Markdown or text file first.")
+            elif snapshot["current"].get("source_digest") != workflow.source_digest(records(sid, snapshot)):
+                raise HTTPException(409, "Run a fresh review of the uploaded files before asking questions.")
             if c.execute("SELECT count(*) FROM jobs WHERE status IN ('queued','running')").fetchone()[0] >= 4:
                 raise HTTPException(429, "The demo is busy. Please try again shortly.")
             if mode == "live":
@@ -209,7 +286,7 @@ def create_app(data_dir=None, testing=False):
             current = snapshot["current"]
             if not current or current["phase"] != "initial" or current["mode"] != payload.mode:
                 raise HTTPException(409, "Run the initial review in this mode before adding the next batch.")
-        elif snapshot["current"]:
+        elif snapshot["current"] and payload.mode == "rehearsal":
             raise HTTPException(409, "Reset the demo before starting a new initial review.")
         return enqueue(sid, snapshot, "review", payload.mode, payload.phase)
 
@@ -233,6 +310,7 @@ def create_app(data_dir=None, testing=False):
             c.execute("BEGIN IMMEDIATE")
             if c.execute("SELECT 1 FROM jobs WHERE session_id=? AND status IN ('queued','running')", (sid,)).fetchone():
                 raise HTTPException(409, "Wait for the current run before resetting.")
+            documents.clear(sid)
             c.execute("UPDATE sessions SET state=? WHERE id=?", (json.dumps(empty_state()), sid))
         return {"ok": True}
 
@@ -246,11 +324,13 @@ def create_app(data_dir=None, testing=False):
             for index, revision in enumerate(snapshot["revisions"], 1):
                 for key_name, filename in zip(workflow.FIELDS, ("assessment.md", "client-email.md", "escrow-email.md")):
                     z.writestr(f"revision-{index}-{revision['phase']}/{filename}", revision[key_name])
+                for source in revision.get("source_snapshot", []):
+                    z.writestr(f"revision-{index}/sources/{source['name']}", source["text"])
             z.writestr("README.txt", "Synthetic demonstration. Emails are drafts only. "
                        "Rehearsal results are saved examples, not new AI output.\n"
                        "Run mode: " + snapshot["current"]["mode"])
         return Response(data.getvalue(), media_type="application/zip",
-                        headers={"Content-Disposition": 'attachment; filename="rivera-intake.zip"'})
+                        headers={"Content-Disposition": 'attachment; filename="intake-review.zip"'})
 
     app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
     return app

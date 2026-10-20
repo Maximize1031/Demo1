@@ -202,3 +202,65 @@ def test_live_limit(tmp_path,monkeypatch):
     with TestClient(create_app(tmp_path),headers=HEADERS) as client:
         client.post("/api/login",json={})
         assert client.post("/api/review",json={"phase":"initial","mode":"live"}).status_code==429
+
+
+def test_upload_validation_and_isolation(client, app, tmp_path):
+    assert client.post('/api/case', json={'name': 'Cedar Grove LLC'}).status_code == 200
+    assert client.get('/api/state').json()['sources'] == []
+    files = [{'name': 'client notes.txt', 'text': 'Synthetic client Cedar Grove LLC. Property: 84 Cedar Lane.'}]
+    assert client.post('/api/upload', json={'files': files}).status_code == 200
+    state = client.get('/api/state').json()
+    assert state['sources'][0]['name'] == 'client-notes.txt'
+    assert state['sources'][0]['text'] == files[0]['text']
+    assert list((tmp_path / 'uploads').glob('*/*'))
+    assert client.post('/api/upload', json={'files': files}).status_code == 400
+    for name, text in [('bad.pdf', 'a'), ('../bad.md', 'a'), ('bad.md', '\x00'), ('bad.md', 'a'*100001), ('bad.md', '123-45-6789')]:
+        assert client.post('/api/upload', json={'files': [{'name': name, 'text': text}]}).status_code == 400
+    other = TestClient(app, headers=HEADERS)
+    other.post('/api/login', json={})
+    assert all(s['name'] != 'client-notes.txt' for s in other.get('/api/state').json()['sources'])
+    assert client.post('/api/review', json={'phase': 'initial', 'mode': 'rehearsal'}).status_code == 409
+    assert client.post('/api/reset', json={}).status_code == 200
+    assert not list((tmp_path / 'uploads').glob('*/*'))
+
+
+def test_live_upload_snapshot_and_rerun(tmp_path, monkeypatch):
+    monkeypatch.setenv('OPENAI_API_KEY', 'test-key')
+    monkeypatch.setenv('APP_ENV', 'local')
+    monkeypatch.setenv('DEMO_PASSWORD', '')
+    seen = []
+    def fake_live(key, model, phase, previous, records, case):
+        seen.append((records, case))
+        result = workflow.rehearsal('initial')
+        result.update(mode='live', source_snapshot=records, source_digest=workflow.source_digest(records), case=case)
+        if previous:
+            result['rows'][0]['value'] = 'New evidence changes this finding'
+        return result
+    monkeypatch.setattr(workflow, 'live_review', fake_live)
+    with TestClient(create_app(tmp_path), headers=HEADERS) as c:
+        c.post('/api/login', json={})
+        c.post('/api/case', json={'name': 'Cedar Grove LLC'})
+        assert c.post('/api/review', json={'phase': 'initial', 'mode': 'live'}).status_code == 400
+        c.post('/api/upload', json={'files': [{'name': 'brief.txt', 'text': 'Synthetic Cedar Grove case.'}]})
+        first = review(c, mode='live')
+        assert not first['stale']
+        assert len(seen[0][0]) == 1 and seen[0][1]['name'] == 'Cedar Grove LLC'
+        c.post('/api/upload', json={'files': [{'name': 'update.md', 'text': 'Additional new synthetic facts.'}]})
+        assert c.get('/api/state').json()['stale']
+        assert c.post('/api/chat', json={'message': 'What changed?'}).status_code == 409
+        second = review(c, mode='live')
+        assert not second['stale'] and len(second['revisions']) == 2
+        assert len(second['revisions'][0]['source_snapshot']) == 1
+        assert len(second['revisions'][1]['source_snapshot']) == 2
+        assert second['current']['changed_items']
+        with zipfile.ZipFile(io.BytesIO(c.get('/api/download').content)) as z:
+            assert z.read('revision-1/sources/brief.txt') == b'Synthetic Cedar Grove case.'
+            assert 'revision-1/sources/update.md' not in z.namelist()
+
+
+def test_custom_bundle_contains_only_uploaded_evidence():
+    records = [{'name': 'new-case.txt', 'text': 'Fresh synthetic information.'}]
+    with zipfile.ZipFile(io.BytesIO(base64.b64decode(workflow.bundle('initial', records)))) as z:
+        paths = [p for p in z.namelist() if '/records/' in p]
+        assert paths == ['m1031-intake-web/records/new-case.txt']
+        assert z.read(paths[0]) == b'Fresh synthetic information.'

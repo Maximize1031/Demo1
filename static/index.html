@@ -26,7 +26,7 @@
       <a class="brand" href="/" aria-label="Maximize 1031 home"><span class="brand-mark">M</span><span>MAXIMIZE <b>1031</b><small>THE INTAKE WORKSPACE</small></span></a>
       <div class="rail-label">WORKSPACE</div>
       <div class="nav-active"><span>▤</span> Intake review <span class="nav-count">1</span></div>
-      <div class="case-nav"><span class="case-dot"></span><span>Rivera Orchard LLC<small>Exchange intake</small></span></div>
+      <div class="case-nav"><span class="case-dot"></span><span><b id="nav-case">Rivera Orchard LLC</b><small>Exchange intake</small></span></div>
       <div class="rail-bottom"><div class="avatar">ST</div><div>Shant Tchakerian<small>Maximize 1031</small></div></div>
     </aside>
     <div class="page">
@@ -37,12 +37,17 @@
           <span class="workspace-tag"><span class="status-dot"></span> Intake workspace</span>
         </section>
         <section class="case-header">
-          <div class="case-title"><div class="property-icon">⌂</div><div><p class="eyebrow">EXCHANGE INTAKE <span>DEMO-RIVERA-001</span></p><h2>Rivera Orchard LLC</h2><p>1250 Orchard Avenue · Pasadena, CA 91103</p></div></div>
-          <div class="case-meta"><span>PRIMARY CONTACT<strong>Maya Rivera</strong></span><span>SALE PRICE<strong>$2,450,000</strong></span></div>
+          <div class="case-title"><div class="property-icon">⌂</div><div><p class="eyebrow">EXCHANGE INTAKE <span id="case-id">DEMO-RIVERA-001</span></p><h2 id="case-name">Rivera Orchard LLC</h2><p id="case-property">1250 Orchard Avenue · Pasadena, CA 91103</p></div></div>
+          <div class="case-meta" id="sample-meta"><span>PRIMARY CONTACT<strong>Maya Rivera</strong></span><span>SALE PRICE<strong>$2,450,000</strong></span></div>
         </section>
         <section class="runbar" aria-label="Demo controls">
           <div class="mode-field"><label for="mode">Demo mode</label><select id="mode"><option value="rehearsal">Rehearsal · saved results</option><option value="live">Live AI · fresh review</option></select></div>
           <div class="run-actions"><button id="run" class="primary">Run intake review <span>↗</span></button><button id="next" class="secondary" disabled>Add next batch</button><button id="reset" class="text-button" disabled>Reset demo</button></div>
+        </section>
+        <section class="upload-panel">
+          <div><h3>Bring your own synthetic records</h3><p>Upload Markdown or plain text, then run a fresh AI review. Add more evidence and run it again to see what changes.</p></div>
+          <div class="run-actions"><label for="upload-files" class="secondary">Choose .md or .txt files</label><input id="upload-files" type="file" accept=".md,.txt,text/plain,text/markdown" multiple><button id="upload-button" class="primary">Upload files</button><button id="new-case" class="secondary">Start a new case</button></div>
+          <p id="data-status" role="status"></p><small>Up to 100 KB per file · 30 records · Synthetic data only. Files stay in this browser session for 24 hours.</small>
         </section>
         <p id="mode-note" class="mode-note"></p>
         <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
@@ -50,7 +55,7 @@
           <div class="stat"><div class="stat-title">Already on file <span class="stat-icon green">✓</span></div><div id="found-count" class="stat-number">—</div><p>Checklist items supported</p></div>
           <div class="stat"><div class="stat-title">Need a response <span class="stat-icon amber">↗</span></div><div id="external-count" class="stat-number">—</div><p>Client &amp; escrow follow-up</p></div>
           <div class="stat"><div class="stat-title">Internal follow-up <span class="stat-icon neutral">⌁</span></div><div id="internal-count" class="stat-number">—</div><p>For your team to handle</p></div>
-          <div class="stat"><div class="stat-title">Source records <span class="stat-icon neutral">▤</span></div><div id="source-count" class="stat-number">5</div><p>Prepared demo documents</p></div>
+          <div class="stat"><div class="stat-title">Source records <span class="stat-icon neutral">▤</span></div><div id="source-count" class="stat-number">5</div><p>Files available for review</p></div>
         </section>
         <div class="work-grid">
           <section class="review-panel">
@@ -61,7 +66,7 @@
               <button id="tab-history" role="tab" aria-selected="false" aria-controls="pane-history" data-tab="history" tabindex="-1">History</button>
             </div>
             <div id="pane-intake" class="pane" role="tabpanel" aria-labelledby="tab-intake">
-              <div id="empty" class="empty-state"><div class="empty-icon">▤</div><p class="eyebrow">YOUR CASE, BROUGHT TOGETHER</p><h2>Start with what you already have.</h2><p>Five prepared records are ready for review. See what’s supported, what needs attention, and who to ask next.</p><div class="process"><span>01 · Review records</span><span>02 · Find gaps</span><span>03 · Draft follow-up</span></div></div>
+              <div id="empty" class="empty-state"><div class="empty-icon">▤</div><p class="eyebrow">YOUR CASE, BROUGHT TOGETHER</p><h2>Start with what you already have.</h2><p>Upload your own records or use the sample case. See what’s supported, what needs attention, and who to ask next.</p><div class="process"><span>01 · Review records</span><span>02 · Find gaps</span><span>03 · Draft follow-up</span></div></div>
               <div id="intake-content" hidden></div>
             </div>
             <div id="pane-evidence" class="pane" role="tabpanel" aria-labelledby="tab-evidence" hidden><div class="pane-heading"><div><h3>The evidence behind each finding</h3><p>Source references stay attached to every checklist item.</p></div></div><div id="evidence-rows"></div></div>
@@ -72,15 +77,16 @@
           <aside class="assistant-panel">
             <div class="assistant-heading"><div class="assistant-symbol">✳</div><div><h3>Intake assistant</h3><p>Context for your next decision</p></div><span class="status-dot"></span></div>
             <div id="chat-messages" class="chat-messages" role="log" aria-label="Assistant conversation" aria-live="polite"><div class="assistant-welcome"><p>Keep the whole case in view.</p><span>After a live review, ask about a finding, its supporting evidence, or the next follow-up.</span></div></div>
-            <div class="suggestions"><button data-question="Why is the closing date flagged?">Why is the closing date flagged? ↗</button><button data-question="What do we still need from Maya?">What do we still need from Maya? ↗</button></div>
+            <div class="suggestions"><button data-question="Why is the closing date flagged?">Why is the closing date flagged? ↗</button><button data-question="What do we still need from the client?">What do we still need from the client? ↗</button></div>
             <form id="chat-form"><label class="sr-only" for="question">Ask about this case</label><textarea id="question" placeholder="Ask about this case…" rows="2" maxlength="2000" disabled></textarea><div><small>Use receipt status, never tax IDs.</small><button id="ask" type="submit" aria-label="Send question" disabled>↑</button></div></form>
           </aside>
         </div>
-        <section class="sources-section"><div class="sources-heading"><h3>The source file</h3><span>Prepared Markdown records · ingestion assumed</span></div><div id="sources" class="source-grid"></div></section>
+        <section class="sources-section"><div class="sources-heading"><h3>Case documents</h3><span>Markdown &amp; text · click to read</span></div><div id="sources" class="source-grid"></div></section>
         <footer class="page-footer"><span>MAXIMIZE 1031 <span>·</span> Built around your workflow.</span><span>Synthetic records · Drafts only · Professional review required</span></footer>
       </main>
     </div>
   </div>
   <dialog id="source-dialog"><div class="dialog-heading"><h3 id="source-title"></h3><button id="close-source" aria-label="Close document">✕</button></div><pre id="source-text"></pre></dialog>
+<dialog id="case-dialog"><form id="case-form"><h3>Start a new synthetic case</h3><p>This replaces the current workspace. Download your review first to keep it.</p><label for="new-case-name">Case name</label><input id="new-case-name" required maxlength="100" placeholder="Example: Cedar Grove LLC"><div class="run-actions"><button type="submit" class="primary">Create empty case</button><button type="button" id="cancel-case">Cancel</button></div></form></dialog>
 </body>
 </html>
